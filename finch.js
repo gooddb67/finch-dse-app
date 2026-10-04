@@ -50,7 +50,9 @@ function listProviders() {
 
 // POST /sandbox/connections authenticates with Basic auth (client_id:client_secret)
 // and returns an access token for a new mock company on the chosen provider.
-function createSandboxConnection(providerId, authenticationType) {
+// `products` defaults to the app's limited scope; scripts/verify-scope.js overrides it
+// to create a control token.
+function createSandboxConnection(providerId, authenticationType, products = PRODUCTS) {
   const basicAuth = Buffer.from(
     `${process.env.FINCH_CLIENT_ID}:${process.env.FINCH_CLIENT_SECRET}`
   ).toString('base64');
@@ -61,7 +63,7 @@ function createSandboxConnection(providerId, authenticationType) {
     body: {
       provider_id: providerId,
       authentication_type: authenticationType,
-      products: PRODUCTS,
+      products,
     },
   });
 }
@@ -114,6 +116,7 @@ function getEmployment(token, individualId) {
 module.exports = {
   FinchError,
   PRODUCTS,
+  request,
   listProviders,
   createSandboxConnection,
   getCompany,

@@ -10,7 +10,8 @@ if (!process.env.FINCH_CLIENT_ID || !process.env.FINCH_CLIENT_SECRET) {
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve the built React app (npm start runs `vite build` first).
+app.use(express.static(path.join(__dirname, 'client', 'dist')));
 
 // ---------------------------------------------------------------------------
 // Server-side state. Access tokens live only here, in process memory; they are
