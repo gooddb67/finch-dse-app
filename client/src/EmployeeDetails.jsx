@@ -39,8 +39,8 @@ function Individual({ result: { data: p, error } }) {
       ['Middle name', fmt.text(p.middle_name)],
       ['Last name', fmt.text(p.last_name)],
       ['Preferred name', fmt.text(p.preferred_name)],
-      ['Emails', (p.emails || []).filter((e) => e?.data).map((e) => (e.type ? `${e.data} (${e.type})` : e.data))],
-      ['Phone numbers', (p.phone_numbers || []).filter((n) => n?.data).map((n) => (n.type ? `${n.data} (${n.type})` : n.data))],
+      ['Emails', formatContacts(p.emails)],
+      ['Phone numbers', formatContacts(p.phone_numbers)],
       ['Date of birth', fmt.text(p.dob)],
       ['Gender', fmt.enum(p.gender)],
       ['Ethnicity', fmt.enum(p.ethnicity)],
@@ -73,9 +73,51 @@ function Employment({ result: { data: e, error }, managerName }) {
       ['Union local', fmt.text(e.union_local)],
       ['Highly compensated', fmt.bool(e.highly_compensated_employee)],
       ['Key employee', fmt.bool(e.key_employee)],
-      ['Custom fields', (e.custom_fields || []).filter((f) => f?.name).map((f) =>
-        `${f.name}: ${isEmpty(f.value) ? NOT_PROVIDED : typeof f.value === 'object' ? JSON.stringify(f.value) : f.value}`)],
+      ['Custom fields', formatCustomFields(e.custom_fields)],
       ['Source ID', fmt.text(e.source_id)],
     ]} />
   );
+}
+
+// Emails and phone numbers come as [{ data, type }]. Show each one as "value (type)",
+// skipping entries with no value.
+function formatContacts(contacts) {
+  const lines = [];
+  if (!contacts) {
+    return lines;
+  }
+  for (const contact of contacts) {
+    if (!contact?.data) {
+      continue;
+    }
+    if (contact.type) {
+      lines.push(`${contact.data} (${contact.type})`);
+    } else {
+      lines.push(contact.data);
+    }
+  }
+  return lines;
+}
+
+// Custom fields come as [{ name, value }]. The value can be text, a number, or an object.
+function formatCustomFields(fields) {
+  const lines = [];
+  if (!fields) {
+    return lines;
+  }
+  for (const field of fields) {
+    if (!field?.name) {
+      continue;
+    }
+    let value;
+    if (isEmpty(field.value)) {
+      value = NOT_PROVIDED;
+    } else if (typeof field.value === 'object') {
+      value = JSON.stringify(field.value);
+    } else {
+      value = field.value;
+    }
+    lines.push(`${field.name}: ${value}`);
+  }
+  return lines;
 }

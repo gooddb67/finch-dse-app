@@ -16,7 +16,8 @@ export default function App() {
   const [providerId, setProviderId] = useState('');
   const [authType, setAuthType] = useState('');
   const [connecting, setConnecting] = useState(false);
-  const [status, setStatus] = useState(null); // string or { error }
+  const [statusMessage, setStatusMessage] = useState(''); // e.g. "Connected to Gusto"
+  const [statusError, setStatusError] = useState(null); // { message }
   const [connection, setConnection] = useState(null); // { company, directory }
   const [selected, setSelected] = useState(null); // directory entry
 
@@ -25,18 +26,36 @@ export default function App() {
       .then(setProviders)
       .catch((err) => {
         setProviders([]);
-        setStatus({ error: { message: err.message } });
+        setStatusError({ message: err.message });
       });
   }, []);
 
   const provider = providers?.find((p) => p.id === providerId);
 
-  // Directory lookup so manager IDs can be shown as names.
-  const directoryById = useMemo(
-    () => new Map((connection?.directory.data || []).map((e) => [e.id, e])),
-    [connection]
-  );
-  const managerName = (manager) => (manager?.id && fmt.name(directoryById.get(manager.id))) || null;
+  // Lookup table (employee ID -> employee) so manager IDs can be shown as names.
+  // useMemo rebuilds it only when the connection changes, not on every render.
+  const directoryById = useMemo(() => {
+    const lookup = new Map();
+    const people = connection?.directory.data;
+    if (people) {
+      for (const person of people) {
+        lookup.set(person.id, person);
+      }
+    }
+    return lookup;
+  }, [connection]);
+
+  // Finch only gives a manager's ID, so look up their name in the directory.
+  function managerName(manager) {
+    if (!manager?.id) {
+      return null;
+    }
+    const person = directoryById.get(manager.id);
+    if (!person) {
+      return null;
+    }
+    return fmt.name(person);
+  }
 
   function selectProvider(id) {
     setProviderId(id);
@@ -47,7 +66,8 @@ export default function App() {
   async function connect(event) {
     event.preventDefault();
     setConnecting(true);
-    setStatus(`Connecting to ${provider.displayName}…`);
+    setStatusMessage(`Connecting to ${provider.displayName}…`);
+    setStatusError(null);
     try {
       const data = await api('/api/connect', {
         method: 'POST',
@@ -56,10 +76,11 @@ export default function App() {
       });
       setConnection(data);
       setSelected(null);
-      setStatus(`Connected to ${provider.displayName} (${fmt.enum(authType)}).`);
+      setStatusMessage(`Connected to ${provider.displayName} (${fmt.enum(authType)}).`);
     } catch (err) {
       setConnection(null);
-      setStatus({ error: { message: err.message } });
+      setStatusMessage('');
+      setStatusError({ message: err.message });
     } finally {
       setConnecting(false);
     }
@@ -97,7 +118,8 @@ export default function App() {
             <button type="submit" disabled={!provider || connecting}>Connect</button>
           </form>
           <div className="status" role="status">
-            {typeof status === 'string' ? status : status?.error && <ErrorBox error={status.error} />}
+            {statusMessage}
+            {statusError && <ErrorBox error={statusError} />}
           </div>
         </section>
 

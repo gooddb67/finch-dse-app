@@ -23,17 +23,18 @@ let providerName = null; // for error messages, e.g. "Workday does not support..
 // Kept on the server so the browser only receives the employee being viewed.
 let employees = new Map();
 
-// The error shape the browser shows. A 501 gets the custom "not supported" message.
-function errorResult(label, status, message) {
-  console.warn(`[finch] ${label} failed:`, status, message);
-  return {
-    error: {
-      status,
-      message: status === 501
-        ? `${providerName} does not support the ${label} endpoint, so this information isn't available.`
-        : `Couldn't load ${label.toLowerCase()} data: ${message}`,
-    },
-  };
+// The error shape the browser shows. A 501 gets the custom "not supported" message;
+// anything else gets a general message that includes Finch's reason.
+function errorResult(label, status, finchMessage) {
+  console.warn(`[finch] ${label} failed:`, status, finchMessage);
+
+  let message;
+  if (status === 501) {
+    message = `${providerName} does not support the ${label} endpoint, so this information isn't available.`;
+  } else {
+    message = `Couldn't load ${label.toLowerCase()} data: ${finchMessage}`;
+  }
+  return { error: { status, message } };
 }
 
 // Run one Finch call and return { data } or { error }, so one failing endpoint
@@ -50,28 +51,52 @@ async function settle(label, fn) {
 // (e.g. a 501 or 429), every employee gets that error. Otherwise each item has its
 // own code, so one employee can fail while the rest succeed.
 function resultFor(label, batch, itemsById, individualId) {
-  if (batch.error) return batch;
+  if (batch.error) {
+    return batch;
+  }
+
   const item = itemsById.get(individualId);
-  if (!item) return errorResult(label, 404, 'No record was returned for this employee');
-  if (item.code !== 200) return errorResult(label, item.code, item.body?.message || `Finch returned code ${item.code}`);
+  if (!item) {
+    return errorResult(label, 404, 'No record was returned for this employee');
+  }
+  if (item.code !== 200) {
+    const finchMessage = item.body?.message || `Finch returned code ${item.code}`;
+    return errorResult(label, item.code, finchMessage);
+  }
   return { data: item.body };
 }
 
+// Turn a batch response into a lookup table: individual_id -> that employee's item.
+// This matches results by ID, so it doesn't matter what order Finch returns them in.
+function itemsByEmployeeId(batch) {
+  const lookup = new Map();
+  if (batch.error) {
+    return lookup; // the whole request failed; resultFor() handles that case
+  }
+  for (const item of batch.data) {
+    lookup.set(item.individual_id, item);
+  }
+  return lookup;
+}
+
 // Fetch individual + employment data for all employees: two requests in total,
-// no matter how many employees. Results are matched by individual_id, not by position.
+// no matter how many employees.
 async function loadEmployees(individualIds) {
   const [individuals, employments] = await Promise.all([
     settle('Individual', () => finch.getIndividuals(accessToken, individualIds)),
     settle('Employment', () => finch.getEmployments(accessToken, individualIds)),
   ]);
-  const byId = (batch) => new Map((batch.data || []).map((item) => [item.individual_id, item]));
-  const individualsById = byId(individuals);
-  const employmentsById = byId(employments);
+  const individualsById = itemsByEmployeeId(individuals);
+  const employmentsById = itemsByEmployeeId(employments);
 
-  return new Map(individualIds.map((id) => [id, {
-    individual: resultFor('Individual', individuals, individualsById, id),
-    employment: resultFor('Employment', employments, employmentsById, id),
-  }]));
+  const records = new Map();
+  for (const id of individualIds) {
+    records.set(id, {
+      individual: resultFor('Individual', individuals, individualsById, id),
+      employment: resultFor('Employment', employments, employmentsById, id),
+    });
+  }
+  return records;
 }
 
 app.get('/api/providers', async (req, res) => {

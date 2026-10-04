@@ -10,15 +10,21 @@ export function FieldList({ rows }) {
       {rows.map(([label, value], i) => (
         <Fragment key={i}>
           <dt>{label}</dt>
-          <dd>
-            {isEmpty(value)
-              ? <span className="not-provided">{NOT_PROVIDED}</span>
-              : [].concat(value).map((line, j) => <div key={j}>{line}</div>)}
-          </dd>
+          <dd><FieldValue value={value} /></dd>
         </Fragment>
       ))}
     </dl>
   );
+}
+
+// One field's value: "Not provided" if it's empty, otherwise one line per item
+// (most values are a single string; some, like emails, are a list).
+function FieldValue({ value }) {
+  if (isEmpty(value)) {
+    return <span className="not-provided">{NOT_PROVIDED}</span>;
+  }
+  const lines = Array.isArray(value) ? value : [value];
+  return lines.map((line, i) => <div key={i}>{line}</div>);
 }
 
 export function ErrorBox({ error }) {

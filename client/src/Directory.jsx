@@ -26,7 +26,7 @@ export default function Directory({ result: { data: people, error }, selectedId,
             </td>
             <Cell value={fmt.text(person.department?.name)} />
             <Cell value={managerName(person.manager)} />
-            <Cell value={person.is_active === true ? 'Active' : person.is_active === false ? 'Inactive' : null} />
+            <Cell value={fmt.active(person.is_active)} />
           </tr>
         ))}
       </tbody>
