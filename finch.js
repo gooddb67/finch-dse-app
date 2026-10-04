@@ -1,92 +1,78 @@
-// Thin wrapper around the Finch REST API. This is the only module that talks to Finch.
-// Docs: https://developer.tryfinch.com/api-reference
-
-const BASE_URL = 'https://api.tryfinch.com';
-const API_VERSION = '2020-09-17';
+// Thin wrapper around Finch's official Node SDK (@tryfinch/finch-api). This is the
+// only module that talks to Finch. Docs: https://developer.tryfinch.com/api-reference
+//
+// The SDK sends the Finch-API-Version header, builds the Basic/Bearer Authorization
+// headers, and throws an error with `status` set for any 4xx/5xx response.
+const Finch = require('@tryfinch/finch-api').default;
 
 // Only the products this app needs. Because payment and pay_statement are not
 // requested, the resulting token cannot call /employer/payment or /employer/pay-statement.
 const PRODUCTS = ['company', 'directory', 'individual', 'employment'];
 
-async function request(path, { method = 'GET', token, basicAuth, body } = {}) {
-  const headers = { 'Finch-API-Version': API_VERSION };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (basicAuth) headers.Authorization = `Basic ${basicAuth}`;
-  if (body) headers['Content-Type'] = 'application/json';
+// Reads FINCH_CLIENT_ID and FINCH_CLIENT_SECRET from the environment.
+// Retries are off: the SDK retries every status >= 500, including 501 "not implemented",
+// which only repeats a request that will never succeed.
+const client = new Finch({ maxRetries: 0 });
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const json = await res.json().catch(() => null);
-
-  // 202 means the data isn't ready yet (assisted connections), so treat it as an error too.
-  if (!res.ok || res.status === 202) {
-    const err = new Error(json?.message || `Finch API returned HTTP ${res.status}`);
-    err.status = res.status;
+// The SDK returns a 202 as if it were data. A 202 means the data isn't ready yet
+// (assisted connections), so treat it as an error like the other non-data responses.
+async function dataOrThrow(apiPromise) {
+  const { data, response } = await apiPromise.withResponse();
+  if (response.status === 202) {
+    const err = new Error(data.message || 'Data is still being prepared');
+    err.status = 202;
     throw err;
   }
-  return json;
+  return data;
 }
 
-// GET /providers is unauthenticated; used to populate the provider dropdown.
-function listProviders() {
-  return request('/providers');
+// GET /providers needs no access token, but the SDK expects one, so explicitly
+// omit the Authorization header. Used to populate the provider dropdown.
+async function listProviders() {
+  const page = await client.providers.list({ headers: { Authorization: null } });
+  return page.items;
 }
 
 // POST /sandbox/connections authenticates with Basic auth (client_id:client_secret)
 // and returns an access token for a new mock company on the chosen provider.
 function createSandboxConnection(providerId, authenticationType) {
-  const basicAuth = Buffer.from(
-    `${process.env.FINCH_CLIENT_ID}:${process.env.FINCH_CLIENT_SECRET}`
-  ).toString('base64');
-
-  return request('/sandbox/connections', {
-    method: 'POST',
-    basicAuth,
-    body: {
-      provider_id: providerId,
-      authentication_type: authenticationType,
-      products: PRODUCTS,
-    },
+  return client.sandbox.connections.create({
+    provider_id: providerId,
+    authentication_type: authenticationType,
+    products: PRODUCTS,
   });
 }
 
+// Data calls use Bearer auth with the connection's access token.
 function getCompany(token) {
-  return request('/employer/company', { token });
+  return dataOrThrow(client.withAccessToken(token).hris.company.retrieve());
 }
 
 // One page is enough for the sandbox's 20 mock employees.
 async function getDirectory(token) {
-  const data = await request('/employer/directory', { token });
-  return data.individuals;
+  const page = await dataOrThrow(client.withAccessToken(token).hris.directory.list());
+  return page.individuals;
 }
 
-// /employer/individual and /employer/employment are batch endpoints: the record is
-// inside responses[0].body, and each item has its own status code.
-async function getBatchItem(path, token, individualId) {
-  const data = await request(path, {
-    method: 'POST',
-    token,
-    body: { requests: [{ individual_id: individualId }] },
-  });
-
-  const item = data.responses[0];
-  if (item.code !== 200) {
-    const err = new Error(item.body?.message || `Finch returned code ${item.code} for this employee`);
-    err.status = item.code;
-    throw err;
-  }
-  return item.body;
+// /employer/individual and /employer/employment are batch endpoints: one request can ask
+// for up to 10,000 employees. Finch returns one item per employee, each with its own
+// status code: { individual_id, code, body }. The caller checks each item's code.
+async function getIndividuals(token, individualIds) {
+  const page = await dataOrThrow(
+    client.withAccessToken(token).hris.individuals.retrieveMany({
+      requests: individualIds.map((id) => ({ individual_id: id })),
+    })
+  );
+  return page.responses;
 }
 
-function getIndividual(token, individualId) {
-  return getBatchItem('/employer/individual', token, individualId);
-}
-
-function getEmployment(token, individualId) {
-  return getBatchItem('/employer/employment', token, individualId);
+async function getEmployments(token, individualIds) {
+  const page = await dataOrThrow(
+    client.withAccessToken(token).hris.employments.retrieveMany({
+      requests: individualIds.map((id) => ({ individual_id: id })),
+    })
+  );
+  return page.responses;
 }
 
 module.exports = {
@@ -94,6 +80,6 @@ module.exports = {
   createSandboxConnection,
   getCompany,
   getDirectory,
-  getIndividual,
-  getEmployment,
+  getIndividuals,
+  getEmployments,
 };

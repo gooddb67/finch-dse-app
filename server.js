@@ -18,18 +18,60 @@ app.use(express.static(path.join(__dirname, 'client', 'dist')));
 let accessToken = null;
 let providerName = null; // for error messages, e.g. "Workday does not support..."
 
+// Individual + employment data for every employee, fetched in one batch when connecting.
+// individual_id -> { individual, employment }, each { data } or { error }.
+// Kept on the server so the browser only receives the employee being viewed.
+let employees = new Map();
+
+// The error shape the browser shows. A 501 gets the custom "not supported" message.
+function errorResult(label, status, message) {
+  console.warn(`[finch] ${label} failed:`, status, message);
+  return {
+    error: {
+      status,
+      message: status === 501
+        ? `${providerName} does not support the ${label} endpoint, so this information isn't available.`
+        : `Couldn't load ${label.toLowerCase()} data: ${message}`,
+    },
+  };
+}
+
 // Run one Finch call and return { data } or { error }, so one failing endpoint
 // (e.g. a 501 on company) doesn't stop the rest of the page from loading.
 async function settle(label, fn) {
   try {
     return { data: await fn() };
   } catch (err) {
-    console.warn(`[finch] ${label} failed:`, err.status, err.message);
-    const message = err.status === 501
-      ? `${providerName} does not support the ${label} endpoint, so this information isn't available.`
-      : `Couldn't load ${label.toLowerCase()} data: ${err.message}`;
-    return { error: { status: err.status, message } };
+    return errorResult(label, err.status, err.message);
   }
+}
+
+// Pick one employee's result out of a settled batch call. If the whole request failed
+// (e.g. a 501 or 429), every employee gets that error. Otherwise each item has its
+// own code, so one employee can fail while the rest succeed.
+function resultFor(label, batch, itemsById, individualId) {
+  if (batch.error) return batch;
+  const item = itemsById.get(individualId);
+  if (!item) return errorResult(label, 404, 'No record was returned for this employee');
+  if (item.code !== 200) return errorResult(label, item.code, item.body?.message || `Finch returned code ${item.code}`);
+  return { data: item.body };
+}
+
+// Fetch individual + employment data for all employees: two requests in total,
+// no matter how many employees. Results are matched by individual_id, not by position.
+async function loadEmployees(individualIds) {
+  const [individuals, employments] = await Promise.all([
+    settle('Individual', () => finch.getIndividuals(accessToken, individualIds)),
+    settle('Employment', () => finch.getEmployments(accessToken, individualIds)),
+  ]);
+  const byId = (batch) => new Map((batch.data || []).map((item) => [item.individual_id, item]));
+  const individualsById = byId(individuals);
+  const employmentsById = byId(employments);
+
+  return new Map(individualIds.map((id) => [id, {
+    individual: resultFor('Individual', individuals, individualsById, id),
+    employment: resultFor('Employment', employments, employmentsById, id),
+  }]));
 }
 
 app.get('/api/providers', async (req, res) => {
@@ -50,6 +92,7 @@ app.get('/api/providers', async (req, res) => {
 app.post('/api/connect', async (req, res) => {
   const { providerId, authType } = req.body;
   providerName = req.body.providerName;
+  employees = new Map();
   try {
     const connection = await finch.createSandboxConnection(providerId, authType);
     accessToken = connection.access_token;
@@ -62,20 +105,21 @@ app.post('/api/connect', async (req, res) => {
     settle('Company', () => finch.getCompany(accessToken)),
     settle('Directory', () => finch.getDirectory(accessToken)),
   ]);
+
+  // Once we have the employee IDs, prefetch everyone's details in one batch.
+  if (directory.data?.length) {
+    employees = await loadEmployees(directory.data.map((e) => e.id));
+  }
   res.json({ company, directory });
 });
 
-// Individual + employment data for one employee.
-app.get('/api/employees/:individualId', async (req, res) => {
-  if (!accessToken) {
-    return res.status(400).json({ error: { message: 'Connect to a provider first.' } });
+// Individual + employment data for one employee, from the batch fetched at connect time.
+app.get('/api/employees/:individualId', (req, res) => {
+  const record = employees.get(req.params.individualId);
+  if (!record) {
+    return res.status(404).json({ error: { message: 'Employee not found. Connect to a provider first.' } });
   }
-  const { individualId } = req.params;
-  const [individual, employment] = await Promise.all([
-    settle('Individual', () => finch.getIndividual(accessToken, individualId)),
-    settle('Employment', () => finch.getEmployment(accessToken, individualId)),
-  ]);
-  res.json({ individual, employment });
+  res.json(record);
 });
 
 const port = process.env.PORT || 3000;
