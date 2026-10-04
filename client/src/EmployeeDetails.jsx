@@ -5,19 +5,18 @@ import { ErrorBox, FieldList } from './components.jsx';
 
 // Loads and shows individual + employment data for one employee. App renders this
 // with key={person.id}, so selecting someone else starts with fresh state.
-export default function EmployeeDetails({ connection, person, managerName }) {
+export default function EmployeeDetails({ person, managerName }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     // Ignore the response if the user selects someone else before it arrives.
     let ignore = false;
-    const { providerId, authType } = connection;
-    api(`/api/connections/${encodeURIComponent(providerId)}/${encodeURIComponent(authType)}/employees/${encodeURIComponent(person.id)}`)
+    api(`/api/employees/${encodeURIComponent(person.id)}`)
       .then((result) => { if (!ignore) setData(result); })
       .catch((err) => { if (!ignore) setError({ message: err.message }); });
     return () => { ignore = true; };
-  }, [connection, person.id]);
+  }, [person.id]);
 
   if (error) return <ErrorBox error={error} />;
   if (!data) return <p className="muted">Loading {fmt.name(person) || 'employee'}…</p>;

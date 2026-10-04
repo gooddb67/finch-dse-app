@@ -22,13 +22,10 @@ export function FieldList({ rows }) {
 }
 
 export function ErrorBox({ error }) {
-  const detail = error.status
-    ? [`HTTP ${error.status}`, error.type, error.finchCode].filter(Boolean).join(' · ')
-    : null;
   return (
     <div className="error" role="alert">
-      <span>{error.message}</span>
-      {detail && <small>{detail}</small>}
+      {error.message}
+      {error.status && <small>HTTP {error.status}</small>}
     </div>
   );
 }

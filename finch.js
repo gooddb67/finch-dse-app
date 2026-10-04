@@ -8,15 +8,6 @@ const API_VERSION = '2020-09-17';
 // requested, the resulting token cannot call /employer/payment or /employer/pay-statement.
 const PRODUCTS = ['company', 'directory', 'individual', 'employment'];
 
-class FinchError extends Error {
-  constructor(status, body) {
-    super(body?.message || `Finch API returned HTTP ${status}`);
-    this.status = status;
-    this.name = body?.name || 'finch_error';
-    this.finchCode = body?.finch_code || null;
-  }
-}
-
 async function request(path, { method = 'GET', token, basicAuth, body } = {}) {
   const headers = { 'Finch-API-Version': API_VERSION };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -28,18 +19,14 @@ async function request(path, { method = 'GET', token, basicAuth, body } = {}) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  const json = await res.json().catch(() => null);
 
-  const text = await res.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    // Non-JSON error body (e.g. a gateway error page); fall through with json = null.
+  // 202 means the data isn't ready yet (assisted connections), so treat it as an error too.
+  if (!res.ok || res.status === 202) {
+    const err = new Error(json?.message || `Finch API returned HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
-
-  // 202 means the connection exists but data isn't ready yet (e.g. assisted connections).
-  // The body is a status message, not data, so treat it like an error for the caller.
-  if (!res.ok || res.status === 202) throw new FinchError(res.status, json);
   return json;
 }
 
@@ -50,9 +37,7 @@ function listProviders() {
 
 // POST /sandbox/connections authenticates with Basic auth (client_id:client_secret)
 // and returns an access token for a new mock company on the chosen provider.
-// `products` defaults to the app's limited scope; scripts/verify-scope.js overrides it
-// to create a control token.
-function createSandboxConnection(providerId, authenticationType, products = PRODUCTS) {
+function createSandboxConnection(providerId, authenticationType) {
   const basicAuth = Buffer.from(
     `${process.env.FINCH_CLIENT_ID}:${process.env.FINCH_CLIENT_SECRET}`
   ).toString('base64');
@@ -63,7 +48,7 @@ function createSandboxConnection(providerId, authenticationType, products = PROD
     body: {
       provider_id: providerId,
       authentication_type: authenticationType,
-      products,
+      products: PRODUCTS,
     },
   });
 }
@@ -72,26 +57,14 @@ function getCompany(token) {
   return request('/employer/company', { token });
 }
 
-// The directory is paginated: keep requesting pages until we've collected
-// paging.count individuals (or a page comes back empty).
-async function getFullDirectory(token) {
-  const limit = 100;
-  const individuals = [];
-  let offset = 0;
-
-  while (true) {
-    const page = await request(`/employer/directory?limit=${limit}&offset=${offset}`, { token });
-    const batch = page.individuals || [];
-    individuals.push(...batch);
-    offset += batch.length;
-    if (batch.length === 0 || offset >= (page.paging?.count ?? 0)) break;
-  }
-
-  return individuals;
+// One page is enough for the sandbox's 20 mock employees.
+async function getDirectory(token) {
+  const data = await request('/employer/directory', { token });
+  return data.individuals;
 }
 
-// /employer/individual and /employer/employment are batch endpoints. Each item in
-// `responses` has its own `code`, so one employee can fail even when the HTTP call succeeds.
+// /employer/individual and /employer/employment are batch endpoints: the record is
+// inside responses[0].body, and each item has its own status code.
 async function getBatchItem(path, token, individualId) {
   const data = await request(path, {
     method: 'POST',
@@ -99,9 +72,12 @@ async function getBatchItem(path, token, individualId) {
     body: { requests: [{ individual_id: individualId }] },
   });
 
-  const item = data.responses?.[0];
-  if (!item) throw new FinchError(404, { message: 'No record returned for this employee.' });
-  if (item.code !== 200) throw new FinchError(item.code, item.body);
+  const item = data.responses[0];
+  if (item.code !== 200) {
+    const err = new Error(item.body?.message || `Finch returned code ${item.code} for this employee`);
+    err.status = item.code;
+    throw err;
+  }
   return item.body;
 }
 
@@ -114,13 +90,10 @@ function getEmployment(token, individualId) {
 }
 
 module.exports = {
-  FinchError,
-  PRODUCTS,
-  request,
   listProviders,
   createSandboxConnection,
   getCompany,
-  getFullDirectory,
+  getDirectory,
   getIndividual,
   getEmployment,
 };

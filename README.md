@@ -35,9 +35,7 @@ For front-end development with hot reload, run `node server.js` in one terminal 
 3. Click **Connect**. Company info and the directory appear.
 4. Click any employee to load their individual and employment details.
 
-**Try these to see error handling:**
-- **Workday** with **Credential**: this method doesn't support the Company endpoint, so Finch returns `501` and the app shows a custom message. The directory still loads.
-- **ADP Workforce Now** with **Assisted**: sandbox assisted connections start as "pending", so Finch returns `202`. The app shows a "still syncing" message. (Some providers reject assisted sandbox connections with a `400`; the app shows that error too.)
+**Try this to see the custom error message:** choose **Workday** with **Credential**. That combination doesn't support the Company endpoint, so Finch returns `501` and the app shows a custom message. The directory still loads.
 
 ## How it works
 
@@ -48,29 +46,24 @@ Browser (client/)   ──►  Express server (server.js)  ──►  Finch API 
 
 | Finch call | When |
 | --- | --- |
-| `GET /providers` | Once, at first page load (cached) |
-| `POST /sandbox/connections` | Once per provider + auth type |
-| `GET /employer/company` | Once per connection (cached) |
-| `GET /employer/directory` | Once per connection, all pages (cached) |
-| `POST /employer/individual` and `POST /employer/employment` | Once per employee, on first click (cached) |
+| `GET /providers` | When the page loads |
+| `POST /sandbox/connections` | When you click **Connect** |
+| `GET /employer/company` and `GET /employer/directory` | Right after connecting |
+| `POST /employer/individual` and `POST /employer/employment` | When you click an employee |
 
 ### Design decisions
 
-- **Limited token scope.** The sandbox connection requests only `company`, `directory`, `individual`, and `employment`. Because `payment` and `pay_statement` aren't granted, the token can't call `/employer/payment` or `/employer/pay-statement`: Finch rejects both with `403 insufficient_scope_error`. Run `npm run verify-scope` to check this against the live sandbox. It creates the app's token plus a control token that does request `payment` and `pay_statement`, and confirms only the app's token is blocked.
-- **Token stays on the server.** Access tokens live in an in-memory `Map` in `server.js`. The browser sends only a provider ID and auth type, and the server looks up the token. Restarting the server clears all tokens.
+- **Limited token scope.** The sandbox connection requests only `company`, `directory`, `individual`, and `employment`. Because `payment` and `pay_statement` aren't granted, Finch rejects the token on `/employer/payment` and `/employer/pay-statement` with `403 insufficient_scope_error`.
+- **Token stays on the server.** The access token for the current connection is kept in a variable in `server.js`. The browser never receives it; it only calls our own `/api/...` routes. Connecting again replaces the token, and restarting the server clears it.
 - **Null fields.** Every value goes through one formatter. `null`, missing values, empty strings, and empty lists all display as *Not provided*. Nested objects (address, income, manager) are handled the same way.
-- **Unsupported endpoints.** When Finch returns `501 not_implemented_error`, the server replaces it with a message like *"Workday does not support the Company endpoint…"*. Each endpoint is fetched and reported separately, so one 501 doesn't block the rest of the page. `202`, `401`, and `429` also get specific messages.
-- **Directory pagination.** The server requests 100 records at a time, increasing `offset` until it has collected `paging.count` records.
-- **Caching.** Successful results and 501s are cached, because a provider won't start supporting an endpoint mid-session. Temporary errors (202, 429, 5xx) are not cached, so the next click retries.
+- **Unsupported endpoints.** When Finch returns `501 not_implemented_error`, the server replaces it with a message like *"Workday does not support the Company endpoint…"*. Each endpoint is fetched and reported separately, so one 501 doesn't block the rest of the page. Other errors show a general message that includes Finch's error.
 - **Safe rendering.** React escapes all rendered text, and the app never uses `dangerouslySetInnerHTML`, so provider data can't inject HTML. Bank account numbers are masked to the last four digits. SSNs aren't requested at all.
 
 ## Project structure
 
 ```
-server.js        Express routes, token store, caching, error messages
+server.js        Express routes, token storage, error messages
 finch.js         Finch API client (all HTTP calls to Finch)
-scripts/
-  verify-scope.js  Checks the app's token can't call payment or pay-statement
 client/          React front end (built with Vite)
   index.html       Page shell
   src/
@@ -88,9 +81,12 @@ vite.config.mjs  Build config and dev proxy
 
 ## With more time
 
-- **Persistent, per-user token storage.** Store tokens encrypted in a database, tied to a user session, instead of one in-memory map for the whole server.
+- **Per-user token storage.** Store tokens encrypted in a database, tied to a user session, instead of one variable for the whole server.
 - **Production auth flow.** Use Finch Connect and the authorization-code exchange instead of the sandbox shortcut.
-- **Webhooks.** Listen for data-sync events so assisted connections (202) refresh automatically instead of needing a retry.
+- **Scope check script.** Prove against the live sandbox that the token gets `403` on payment and pay-statement, compared with a control token that has those products.
+- **More specific error messages.** Separate messages for `202` (data still syncing on assisted connections), `401` (reconnect needed), and `429` (rate limit).
+- **Caching.** Cache company, directory, and employee results so repeat clicks don't call Finch again, and don't cache temporary errors.
+- **Directory pagination.** Request the directory page by page for employers with more employees than one page holds.
+- **Webhooks.** Listen for data-sync events so assisted connections refresh automatically.
 - **Field-support hints.** Use each provider's `supported_fields` from `/providers` to label a null as either "provider doesn't support this field" or "no data entered".
-- **Tests.** Add automated tests for pagination, error mapping, and null rendering, using a mocked Finch API.
-- **Larger directories.** Add search, client-side pagination, and batch-fetching of individual/employment records.
+- **Tests.** Add automated tests for error handling and null rendering, using a mocked Finch API.

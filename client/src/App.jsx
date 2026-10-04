@@ -17,7 +17,7 @@ export default function App() {
   const [authType, setAuthType] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [status, setStatus] = useState(null); // string or { error }
-  const [connection, setConnection] = useState(null); // { providerId, authType, providerName, company, directory }
+  const [connection, setConnection] = useState(null); // { company, directory }
   const [selected, setSelected] = useState(null); // directory entry
 
   useEffect(() => {
@@ -49,13 +49,14 @@ export default function App() {
     setConnecting(true);
     setStatus(`Connecting to ${provider.displayName}…`);
     try {
-      const data = await api(
-        `/api/connections/${encodeURIComponent(providerId)}/${encodeURIComponent(authType)}`,
-        { method: 'POST' }
-      );
-      setConnection({ providerId, authType, ...data });
+      const data = await api('/api/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerId, authType, providerName: provider.displayName }),
+      });
+      setConnection(data);
       setSelected(null);
-      setStatus(`Connected to ${data.providerName} (${fmt.enum(authType)}).`);
+      setStatus(`Connected to ${provider.displayName} (${fmt.enum(authType)}).`);
     } catch (err) {
       setConnection(null);
       setStatus({ error: { message: err.message } });
@@ -125,8 +126,7 @@ export default function App() {
                 <h2>Employee details</h2>
                 {selected ? (
                   <EmployeeDetails
-                    key={`${connection.providerId}:${connection.authType}:${selected.id}`}
-                    connection={connection}
+                    key={selected.id}
                     person={selected}
                     managerName={managerName}
                   />

@@ -6,8 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "vite build && node server.js",
-    "dev": "vite",
-    "verify-scope": "node scripts/verify-scope.js"
+    "dev": "vite"
   },
   "engines": {
     "node": ">=20.19"
