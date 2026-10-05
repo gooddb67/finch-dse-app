@@ -10,8 +10,8 @@ A small Node + Express web app with a React front end that connects to [Finch's 
 ## Setup and run
 
 ```bash
-git clone <this-repo-url>
-cd finch-challenge
+git clone https://github.com/gooddb67/finch-dse-app.git
+cd finch-dse-app
 npm install
 cp .env.example .env
 ```
