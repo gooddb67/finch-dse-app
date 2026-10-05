@@ -1,6 +1,3 @@
-// Thin wrapper around Finch's official Node SDK (@tryfinch/finch-api). This is the
-// only module that talks to Finch. Docs: https://developer.tryfinch.com/api-reference
-//
 // The SDK sends the Finch-API-Version header, builds the Basic/Bearer Authorization
 // headers, and throws an error with `status` set for any 4xx/5xx response.
 const Finch = require('@tryfinch/finch-api').default;
@@ -43,12 +40,11 @@ function createSandboxConnection(providerId, authenticationType) {
   });
 }
 
-// Data calls use Bearer auth with the connection's access token.
 function getCompany(token) {
   return dataOrThrow(client.withAccessToken(token).hris.company.retrieve());
 }
 
-// One page is enough for the sandbox's 20 mock employees.
+
 async function getDirectory(token) {
   const page = await dataOrThrow(client.withAccessToken(token).hris.directory.list());
   return page.individuals;

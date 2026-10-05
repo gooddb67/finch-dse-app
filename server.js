@@ -23,7 +23,7 @@ let providerName = null; // for error messages, e.g. "Workday does not support..
 // Kept on the server so the browser only receives the employee being viewed.
 let employees = new Map();
 
-// The error shape the browser shows. A 501 gets the custom "not supported" message;
+// The error shape the browser shows. A 501 gets a custom "not supported" message;
 // anything else gets a general message that includes Finch's reason.
 function errorResult(label, status, finchMessage) {
   console.warn(`[finch] ${label} failed:`, status, finchMessage);
@@ -66,29 +66,31 @@ function resultFor(label, batch, itemsById, individualId) {
   return { data: item.body };
 }
 
-// Turn a batch response into a lookup table: individual_id -> that employee's item.
-// This matches results by ID, so it doesn't matter what order Finch returns them in.
-function itemsByEmployeeId(batch) {
-  const lookup = new Map();
-  if (batch.error) {
-    return lookup; // the whole request failed; resultFor() handles that case
-  }
-  for (const item of batch.data) {
-    lookup.set(item.individual_id, item);
-  }
-  return lookup;
-}
-
 // Fetch individual + employment data for all employees: two requests in total,
 // no matter how many employees.
 async function loadEmployees(individualIds) {
+  // 1. One batch request per endpoint, covering every employee.
   const [individuals, employments] = await Promise.all([
     settle('Individual', () => finch.getIndividuals(accessToken, individualIds)),
     settle('Employment', () => finch.getEmployments(accessToken, individualIds)),
   ]);
+
+  // 2. Turn each batch response into a lookup table: individual_id -> that employee's item.
+  // This matches results by ID, so it doesn't matter what order Finch returns them in.
+  function itemsByEmployeeId(batch) {
+    const lookup = new Map();
+    if (batch.error) {
+      return lookup; // the whole request failed; resultFor() handles that case
+    }
+    for (const item of batch.data) {
+      lookup.set(item.individual_id, item);
+    }
+    return lookup;
+  }
   const individualsById = itemsByEmployeeId(individuals);
   const employmentsById = itemsByEmployeeId(employments);
 
+  // 3. Build each employee's record: their individual and employment result.
   const records = new Map();
   for (const id of individualIds) {
     records.set(id, {
